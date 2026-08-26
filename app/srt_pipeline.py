@@ -21,7 +21,7 @@ class Segment:
 
 
 PROMPT = """
-You are a Khmer subtitle transcription engine.
+You are a precise bilingual Khmer/English subtitle transcription engine.
 
 Return ONLY valid JSON in this exact shape:
 {
@@ -31,13 +31,18 @@ Return ONLY valid JSON in this exact shape:
 }
 
 Task:
-- Transcribe all spoken audio into natural Khmer script.
-- Keep the transcript Khmer-only unless a foreign name or brand is clearly spoken.
-- Segment by breath/sentence/phrase so subtitles match the speaker's mouth movements.
+- Transcribe exactly what is spoken.
+- If the speaker says Khmer, write Khmer script.
+- If the speaker says English, write English words in Latin script.
+- If the speaker mixes Khmer and English, preserve that mix exactly.
+- Do not translate English words into Khmer and do not romanize Khmer words.
+- Segment by spoken word or very short phrase, not full sentences.
+- Put spaces between spoken units so each word/phrase can become its own subtitle beat.
+- Example text split style: "ជួយ មាន អត់ មាន ឃើញ" instead of "ជួយមានអត់មានឃើញ".
 - Use precise start/end times in seconds.
-- Prefer short subtitle lines. Each segment should be readable and synced.
+- Each segment should contain 1 to 3 spoken units maximum.
 - Do not summarize. Do not add explanations. Do not invent speech.
-- If speech is unclear, write the best Khmer guess and keep timing.
+- If speech is unclear, write the best same-language guess and keep timing.
 """.strip()
 
 
@@ -46,7 +51,8 @@ def generate_srt(input_path: Path, output_dir: Path, api_key: str, model: str) -
     media_path = _prepare_media(input_path, output_dir)
     duration = _duration_seconds(media_path)
     segments = _transcribe_with_gemini(media_path, api_key, model)
-    corrected = _correct_timing(segments, duration)
+    beat_segments = _split_into_subtitle_beats(segments)
+    corrected = _correct_timing(beat_segments, duration)
     srt_path = output_dir / f"{input_path.stem}.km.srt"
     srt_path.write_text(_to_srt(corrected), encoding="utf-8")
     return srt_path
@@ -150,8 +156,8 @@ def _correct_timing(segments: list[Segment], duration: float | None) -> list[Seg
             if start < previous.end + min_gap:
                 start = previous.end + min_gap
 
-        min_duration = min(1.0, max(0.45, len(segment.text) / 22.0))
-        max_duration = max(1.25, len(segment.text) / 7.5)
+        min_duration = min(0.75, max(0.28, len(segment.text) / 28.0))
+        max_duration = max(0.7, min(1.35, len(segment.text) / 8.5))
         if end <= start:
             end = start + min_duration
         end = max(end, start + min_duration)
@@ -165,6 +171,46 @@ def _correct_timing(segments: list[Segment], duration: float | None) -> list[Seg
             corrected.append(Segment(start=start, end=end, text=_clean_text(segment.text)))
 
     return corrected
+
+
+def _split_into_subtitle_beats(segments: list[Segment]) -> list[Segment]:
+    beats: list[Segment] = []
+    for segment in segments:
+        tokens = _tokenize_spoken_units(segment.text)
+        if not tokens:
+            continue
+        if len(tokens) == 1:
+            beats.append(Segment(segment.start, segment.end, tokens[0]))
+            continue
+
+        total_weight = sum(_token_weight(token) for token in tokens)
+        duration = max(0.01, segment.end - segment.start)
+        cursor = segment.start
+        for index, token in enumerate(tokens):
+            if index == len(tokens) - 1:
+                end = segment.end
+            else:
+                end = cursor + duration * (_token_weight(token) / total_weight)
+            beats.append(Segment(cursor, end, token))
+            cursor = end
+    return beats
+
+
+def _tokenize_spoken_units(text: str) -> list[str]:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return []
+
+    spaced = re.sub(r"([,។៕!?;:])", r" \1 ", cleaned)
+    raw_tokens = [token.strip(" \t\r\n,។៕!?;:") for token in spaced.split()]
+    return [token for token in raw_tokens if token]
+
+
+def _token_weight(token: str) -> float:
+    latin_chars = len(re.findall(r"[A-Za-z0-9]", token))
+    khmer_chars = len(re.findall(r"[\u1780-\u17FF]", token))
+    other_chars = max(1, len(token) - latin_chars - khmer_chars)
+    return max(1.0, latin_chars / 4.0 + khmer_chars / 3.0 + other_chars / 4.0)
 
 
 def _clean_text(text: str) -> str:
