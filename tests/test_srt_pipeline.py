@@ -151,3 +151,5 @@ def test_friendly_error_explains_unsupported_model():
 
 def test_uses_selected_model_without_silent_fallback():
     assert _models_to_try("gemini-3.6-flash") == ["gemini-3.6-flash"]
+    assert _models_to_try("gemini-3-flash-preview") == ["gemini-3-flash-preview"]
+    assert _models_to_try("gemini-2.5-flash-preview-tts") == ["gemini-2.5-flash-preview-tts"]
