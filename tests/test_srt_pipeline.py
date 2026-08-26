@@ -31,3 +31,11 @@ def test_fast_speech_keeps_timing_inside_original_window():
     assert len(corrected) == 5
     assert corrected[-1].end <= 0.7
     assert all((segment.end - segment.start) <= 0.35 for segment in corrected)
+
+
+def test_can_group_two_or_three_words_per_subtitle():
+    two_word_beats = _split_into_subtitle_beats([Segment(0, 2, "ជួយ មាន អត់ មាន ឃើញ")], 2)
+    three_word_beats = _split_into_subtitle_beats([Segment(0, 2, "one two three four")], 3)
+
+    assert [beat.text for beat in two_word_beats] == ["ជួយ មាន", "អត់ មាន", "ឃើញ"]
+    assert [beat.text for beat in three_word_beats] == ["one two three", "four"]

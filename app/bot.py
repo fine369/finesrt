@@ -6,11 +6,19 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from app.settings import get_gemini_api_key, has_gemini_api_key, set_gemini_api_key
+from app.settings import (
+    get_gemini_api_key,
+    get_gemini_model,
+    get_words_per_subtitle,
+    has_gemini_api_key,
+    set_gemini_api_key,
+    set_gemini_model,
+    set_words_per_subtitle,
+)
 from app.srt_pipeline import generate_srt
 
 
@@ -28,6 +36,7 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 PORT = int(os.getenv("PORT", "8080"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", uuid.uuid4().hex)
+MODEL_CHOICES = ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -37,9 +46,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         "ផ្ញើ audio ឬ video មកខ្ញុំ។ ខ្ញុំនឹងបង្កើត Khmer SRT ដែល timing ត្រូវតាមមាត់និយាយ។\n\n"
         "Commands:\n"
+        "/menu - បើក menu\n"
         "/setgemini YOUR_KEY - ដាក់ Gemini API key\n"
         "/status - ពិនិត្យ setup"
     )
+    await show_menu(update, context)
+
+
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update):
+        await _deny(update)
+        return
+
+    await update.effective_message.reply_text(_settings_text(), reply_markup=_main_menu())
 
 
 async def setgemini(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -68,8 +87,56 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     gemini_status = "មានរួច" if has_gemini_api_key() else "មិនទាន់មាន"
     await update.effective_message.reply_text(
-        f"Telegram: OK\nGemini key: {gemini_status}\nAllowed user: @{ALLOWED_USERNAME}\nModel: {GEMINI_MODEL}"
+        f"Telegram: OK\n"
+        f"Gemini key: {gemini_status}\n"
+        f"Allowed user: @{ALLOWED_USERNAME}\n"
+        f"Model: {get_gemini_model(GEMINI_MODEL)}\n"
+        f"Words per subtitle: {get_words_per_subtitle()}"
     )
+
+
+async def handle_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update):
+        await _deny(update)
+        return
+
+    query = update.callback_query
+    await query.answer()
+    data = query.data or ""
+
+    if data == "menu:api":
+        await query.edit_message_text(
+            "API menu\n\n"
+            "Gemini key ត្រូវបានរក្សាទុក: "
+            f"{'មានរួច' if has_gemini_api_key() else 'មិនទាន់មាន'}\n\n"
+            "ដាក់ ឬប្តូរ Gemini API key:\n"
+            "/setgemini YOUR_GEMINI_API_KEY",
+            reply_markup=_main_menu(),
+        )
+        return
+
+    if data == "menu:model":
+        await query.edit_message_text("ជ្រើស Model AI:", reply_markup=_model_menu())
+        return
+
+    if data == "menu:words":
+        await query.edit_message_text("ជ្រើសចំនួនពាក្យក្នុង subtitle មួយលោត:", reply_markup=_words_menu())
+        return
+
+    if data.startswith("model:"):
+        model = data.split(":", 1)[1]
+        if model in MODEL_CHOICES:
+            set_gemini_model(model)
+        await query.edit_message_text(_settings_text(), reply_markup=_main_menu())
+        return
+
+    if data.startswith("words:"):
+        set_words_per_subtitle(int(data.split(":", 1)[1]))
+        await query.edit_message_text(_settings_text(), reply_markup=_main_menu())
+        return
+
+    if data == "menu:back":
+        await query.edit_message_text(_settings_text(), reply_markup=_main_menu())
 
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -110,7 +177,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             input_path,
             OUTPUT_DIR,
             get_gemini_api_key(),
-            GEMINI_MODEL,
+            get_gemini_model(GEMINI_MODEL),
+            get_words_per_subtitle(),
         )
     except FileNotFoundError as exc:
         await status.edit_text(f"រក command មិនឃើញ៖ {exc.filename}. សូមដំឡើង ffmpeg។")
@@ -145,11 +213,68 @@ def _suffix_for_media(update: Update) -> str:
     return ".bin"
 
 
+def _settings_text() -> str:
+    return (
+        "Fine SRT Menu\n\n"
+        f"API: {'មានរួច' if has_gemini_api_key() else 'មិនទាន់មាន'}\n"
+        f"Model AI: {get_gemini_model(GEMINI_MODEL)}\n"
+        f"ពាក្យចេញម្តង: {get_words_per_subtitle()}"
+    )
+
+
+def _main_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("API", callback_data="menu:api")],
+            [InlineKeyboardButton("Model AI", callback_data="menu:model")],
+            [InlineKeyboardButton("ពាក្យចេញ 1 / 2 / 3", callback_data="menu:words")],
+        ]
+    )
+
+
+def _model_menu() -> InlineKeyboardMarkup:
+    current = get_gemini_model(GEMINI_MODEL)
+    rows = [
+        [InlineKeyboardButton(f"{'✓ ' if model == current else ''}{model}", callback_data=f"model:{model}")]
+        for model in MODEL_CHOICES
+    ]
+    rows.append([InlineKeyboardButton("Back", callback_data="menu:back")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _words_menu() -> InlineKeyboardMarkup:
+    current = get_words_per_subtitle()
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"{'✓ ' if count == current else ''}{count}",
+                callback_data=f"words:{count}",
+            )
+        ]
+        for count in (1, 2, 3)
+    ]
+    rows.append([InlineKeyboardButton("Back", callback_data="menu:back")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _post_init(app: Application) -> None:
+    await app.bot.set_my_commands(
+        [
+            BotCommand("start", "Start Fine SRT bot"),
+            BotCommand("menu", "Open settings menu"),
+            BotCommand("status", "Check API/model/subtitle settings"),
+            BotCommand("setgemini", "Set Gemini API key"),
+        ]
+    )
+
+
 def main() -> None:
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", show_menu))
     app.add_handler(CommandHandler("setgemini", setgemini))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CallbackQueryHandler(handle_menu_callback))
     app.add_handler(MessageHandler(filters.VIDEO | filters.AUDIO | filters.VOICE | filters.Document.ALL, handle_media))
 
     if WEBHOOK_URL:

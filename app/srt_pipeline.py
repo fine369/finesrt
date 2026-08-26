@@ -43,12 +43,18 @@ Task:
 """.strip()
 
 
-def generate_srt(input_path: Path, output_dir: Path, api_key: str, model: str) -> Path:
+def generate_srt(
+    input_path: Path,
+    output_dir: Path,
+    api_key: str,
+    model: str,
+    words_per_subtitle: int = 1,
+) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     media_path = _prepare_media(input_path, output_dir)
     duration = _duration_seconds(media_path)
     segments = _transcribe_with_gemini(media_path, api_key, model)
-    beat_segments = _split_into_subtitle_beats(segments)
+    beat_segments = _split_into_subtitle_beats(segments, words_per_subtitle)
     corrected = _correct_timing(beat_segments, duration)
     srt_path = output_dir / f"{input_path.stem}.km.srt"
     srt_path.write_text(_to_srt(corrected), encoding="utf-8")
@@ -189,25 +195,32 @@ def _next_start_after(segments: list[Segment], current: Segment) -> float | None
     return None
 
 
-def _split_into_subtitle_beats(segments: list[Segment]) -> list[Segment]:
+def _split_into_subtitle_beats(segments: list[Segment], words_per_subtitle: int = 1) -> list[Segment]:
     beats: list[Segment] = []
+    group_size = min(3, max(1, words_per_subtitle))
     for segment in segments:
         tokens = _tokenize_spoken_units(segment.text)
         if not tokens:
             continue
-        if len(tokens) == 1:
-            beats.append(Segment(segment.start, segment.end, tokens[0]))
+        if len(tokens) == 1 or group_size == 1:
+            grouped_tokens = [[token] for token in tokens]
+        else:
+            grouped_tokens = [tokens[index : index + group_size] for index in range(0, len(tokens), group_size)]
+
+        if len(grouped_tokens) == 1:
+            beats.append(Segment(segment.start, segment.end, " ".join(grouped_tokens[0])))
             continue
 
-        total_weight = sum(_token_weight(token) for token in tokens)
+        grouped_text = [" ".join(group) for group in grouped_tokens]
+        total_weight = sum(_token_weight(text) for text in grouped_text)
         duration = max(0.01, segment.end - segment.start)
         cursor = segment.start
-        for index, token in enumerate(tokens):
-            if index == len(tokens) - 1:
+        for index, text in enumerate(grouped_text):
+            if index == len(grouped_text) - 1:
                 end = segment.end
             else:
-                end = cursor + duration * (_token_weight(token) / total_weight)
-            beats.append(Segment(cursor, end, token))
+                end = cursor + duration * (_token_weight(text) / total_weight)
+            beats.append(Segment(cursor, end, text))
             cursor = end
     return beats
 
