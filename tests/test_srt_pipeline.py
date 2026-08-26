@@ -57,10 +57,29 @@ def test_snap_segment_to_nearby_speech_activity():
     for index in range(32, 71):
         frames[index] = True
 
-    snapped = _snap_segment_to_speech(Segment(0.1, 0.9, "សាក"), frames, 0.01, duration=1.0)
+    snapped = _snap_segment_to_speech(Segment(0.2, 0.65, "សាក"), frames, 0.01, duration=1.0)
 
     assert snapped.start == 0.32
     assert snapped.end == 0.71
+
+
+def test_snap_does_not_extend_word_into_next_word_speech():
+    frames = [False] * 150
+    for index in range(30, 51):
+        frames[index] = True
+    for index in range(58, 91):
+        frames[index] = True
+
+    snapped = _snap_segment_to_speech(
+        Segment(0.28, 0.55, "one"),
+        frames,
+        0.01,
+        duration=1.5,
+        next_segment=Segment(0.58, 0.92, "two"),
+    )
+
+    assert snapped.start == 0.3
+    assert snapped.end <= 0.58
 
 
 def test_keep_segments_in_order_prevents_overlap_after_snapping():

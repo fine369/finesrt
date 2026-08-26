@@ -80,8 +80,10 @@ Fix this invalid subtitle JSON. Keep the same data. Remove any prose, markdown, 
 RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-2.5-flash"
 TRANSCRIPTION_CHUNK_SECONDS = 55.0
 ENERGY_FRAME_SECONDS = 0.01
-TIMING_SNAP_BEFORE_SECONDS = 0.28
-TIMING_SNAP_AFTER_SECONDS = 0.38
+TIMING_START_LOOK_BEFORE_SECONDS = 0.18
+TIMING_START_LOOK_AFTER_SECONDS = 0.24
+TIMING_END_LOOK_BEFORE_SECONDS = 0.24
+TIMING_END_LOOK_AFTER_SECONDS = 0.08
 
 
 def generate_srt(
@@ -454,10 +456,22 @@ def _refine_timing_with_audio(segments: list[Segment], audio_path: Path, duratio
     if not speech_frames:
         return segments
 
-    refined = [
-        _snap_segment_to_speech(segment, speech_frames, frame_seconds, duration)
-        for segment in segments
-    ]
+    ordered = [segment for segment in segments if segment.text]
+    ordered.sort(key=lambda segment: (segment.start, segment.end))
+    refined = []
+    for index, segment in enumerate(ordered):
+        previous_segment = ordered[index - 1] if index else None
+        next_segment = ordered[index + 1] if index + 1 < len(ordered) else None
+        refined.append(
+            _snap_segment_to_speech(
+                segment,
+                speech_frames,
+                frame_seconds,
+                duration,
+                previous_segment,
+                next_segment,
+            )
+        )
     return _keep_segments_in_order(refined, duration)
 
 
@@ -526,13 +540,22 @@ def _snap_segment_to_speech(
     speech_frames: list[bool],
     frame_seconds: float,
     duration: float | None,
+    previous_segment: Segment | None = None,
+    next_segment: Segment | None = None,
 ) -> Segment:
-    window_start = max(0.0, segment.start - TIMING_SNAP_BEFORE_SECONDS)
-    window_end = segment.start + TIMING_SNAP_AFTER_SECONDS
+    previous_boundary = previous_segment.end if previous_segment else 0.0
+    next_boundary = next_segment.start if next_segment else duration
+
+    window_start = max(0.0, previous_boundary, segment.start - TIMING_START_LOOK_BEFORE_SECONDS)
+    window_end = segment.start + TIMING_START_LOOK_AFTER_SECONDS
+    if next_boundary is not None:
+        window_end = min(window_end, next_boundary)
     speech_start = _first_speech_time(speech_frames, frame_seconds, window_start, window_end)
 
-    end_window_start = max(0.0, segment.end - TIMING_SNAP_AFTER_SECONDS)
-    end_window_end = segment.end + TIMING_SNAP_BEFORE_SECONDS
+    end_window_start = max(0.0, segment.start, segment.end - TIMING_END_LOOK_BEFORE_SECONDS)
+    end_window_end = segment.end + TIMING_END_LOOK_AFTER_SECONDS
+    if next_boundary is not None:
+        end_window_end = min(end_window_end, next_boundary)
     if duration is not None:
         end_window_end = min(duration, end_window_end)
     speech_end = _last_speech_time(speech_frames, frame_seconds, end_window_start, end_window_end)
