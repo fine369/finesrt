@@ -2,6 +2,7 @@ from app.srt_pipeline import (
     Segment,
     _correct_timing,
     _load_json,
+    _offset_segments,
     _segments_from_payload,
     _split_into_subtitle_beats,
     _to_srt,
@@ -75,3 +76,10 @@ def test_prefers_word_timings_from_gemini_payload():
 
     assert [beat.text for beat in beats] == ["ខ្ញុំ", "ស្រលាញ់", "បង"]
     assert beats[-1].end == 2
+
+
+def test_offsets_segments_from_later_audio_chunks():
+    segments = _offset_segments([Segment(0.2, 1.4, "YouTube"), Segment(1.4, 2.0, "បង")], 110)
+
+    assert segments[0] == Segment(110.2, 111.4, "YouTube")
+    assert segments[1] == Segment(111.4, 112.0, "បង")

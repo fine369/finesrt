@@ -44,7 +44,10 @@ Task:
 - If the speaker says Khmer, write Khmer script.
 - If the speaker says English, write English words in Latin script.
 - If the speaker mixes Khmer and English, preserve that mix exactly.
+- Never translate, paraphrase, or transliterate. This is transcription only.
 - Do not translate English words into Khmer and do not romanize Khmer words.
+- Keep English brand/app/technical words in Latin script, for example: Facebook, TikTok, YouTube, subscribe, channel, like, comment, Google, Gemini, API, SRT, MP3.
+- If a word is pronounced as an English word or acronym, keep it in English Latin letters even inside a Khmer sentence.
 - Keep segment.text as the natural full phrase that was spoken.
 - In segment.words, split that exact phrase into spoken words/units with accurate start/end times.
 - Khmer example: if the speaker says "ខ្ញុំស្រលាញ់បង", text must be "ខ្ញុំស្រលាញ់បង" and words must be ["ខ្ញុំ", "ស្រលាញ់", "បង"].
@@ -66,6 +69,7 @@ MODEL_FALLBACKS = {
     "gemini-3.6-flash": ("gemini-2.5-flash", "gemini-2.0-flash"),
     "gemini-2.5-pro": ("gemini-2.5-flash", "gemini-2.0-flash"),
 }
+TRANSCRIPTION_CHUNK_SECONDS = 55.0
 
 
 def generate_srt(
@@ -78,7 +82,7 @@ def generate_srt(
     output_dir.mkdir(parents=True, exist_ok=True)
     media_path = _prepare_media(input_path, output_dir)
     duration = _duration_seconds(media_path)
-    segments = _transcribe_with_gemini(media_path, api_key, model)
+    segments = _transcribe_media(media_path, output_dir, api_key, model, duration)
     beat_segments = _split_into_subtitle_beats(segments, words_per_subtitle)
     corrected = _correct_timing(beat_segments, duration)
     srt_path = output_dir / f"{input_path.stem}.km.srt"
@@ -109,6 +113,65 @@ def _prepare_media(input_path: Path, output_dir: Path) -> Path:
         text=True,
     )
     return audio_path
+
+
+def _transcribe_media(
+    media_path: Path,
+    output_dir: Path,
+    api_key: str,
+    model: str,
+    duration: float | None,
+) -> list[Segment]:
+    if duration is None or duration <= TRANSCRIPTION_CHUNK_SECONDS + 5:
+        return _transcribe_with_gemini(media_path, api_key, model)
+
+    all_segments: list[Segment] = []
+    for chunk_path, offset in _split_media_into_chunks(media_path, output_dir, duration):
+        chunk_segments = _transcribe_with_gemini(chunk_path, api_key, model)
+        all_segments.extend(_offset_segments(chunk_segments, offset))
+    return all_segments
+
+
+def _split_media_into_chunks(media_path: Path, output_dir: Path, duration: float) -> list[tuple[Path, float]]:
+    chunks_dir = output_dir / f"{media_path.stem}_chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+
+    chunks: list[tuple[Path, float]] = []
+    offset = 0.0
+    index = 0
+    while offset < duration:
+        chunk_length = min(TRANSCRIPTION_CHUNK_SECONDS, duration - offset)
+        chunk_path = chunks_dir / f"chunk_{index:04}.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                f"{offset:.3f}",
+                "-t",
+                f"{chunk_length:.3f}",
+                "-i",
+                str(media_path),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                str(chunk_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        chunks.append((chunk_path, offset))
+        offset += TRANSCRIPTION_CHUNK_SECONDS
+        index += 1
+
+    return chunks
+
+
+def _offset_segments(segments: list[Segment], offset: float) -> list[Segment]:
+    return [Segment(segment.start + offset, segment.end + offset, segment.text) for segment in segments]
 
 
 def _duration_seconds(path: Path) -> float | None:
