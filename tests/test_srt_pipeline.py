@@ -1,4 +1,11 @@
-from app.srt_pipeline import Segment, _correct_timing, _load_json, _split_into_subtitle_beats, _to_srt
+from app.srt_pipeline import (
+    Segment,
+    _correct_timing,
+    _load_json,
+    _segments_from_payload,
+    _split_into_subtitle_beats,
+    _to_srt,
+)
 
 
 def test_split_space_separated_khmer_units():
@@ -45,3 +52,26 @@ def test_load_json_extracts_object_from_extra_text():
     payload = _load_json('noise before {"segments":[{"start":0,"end":1,"text":"ok"}]} noise after')
 
     assert payload["segments"][0]["text"] == "ok"
+
+
+def test_prefers_word_timings_from_gemini_payload():
+    payload = {
+        "segments": [
+            {
+                "start": 0,
+                "end": 2,
+                "text": "ខ្ញុំស្រលាញ់បង",
+                "words": [
+                    {"start": 0, "end": 0.4, "text": "ខ្ញុំ"},
+                    {"start": 0.4, "end": 1.4, "text": "ស្រលាញ់"},
+                    {"start": 1.4, "end": 2, "text": "បង"},
+                ],
+            }
+        ]
+    }
+
+    segments = _segments_from_payload(payload)
+    beats = _split_into_subtitle_beats(segments, 1)
+
+    assert [beat.text for beat in beats] == ["ខ្ញុំ", "ស្រលាញ់", "បង"]
+    assert beats[-1].end == 2
