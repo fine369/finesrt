@@ -5,6 +5,7 @@ import math
 import mimetypes
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,18 @@ Task:
 - Do not summarize. Do not add explanations. Do not invent speech.
 - If speech is unclear, write the best same-language guess and keep timing.
 """.strip()
+
+REPAIR_PROMPT = """
+Return ONLY valid JSON in this exact shape:
+{"segments":[{"start":0.0,"end":1.0,"text":"spoken words"}]}
+
+Fix this invalid subtitle JSON. Keep the same data. Remove any prose, markdown, or trailing broken text.
+""".strip()
+
+MODEL_FALLBACKS = {
+    "gemini-3.6-flash": ("gemini-2.5-flash", "gemini-2.0-flash"),
+    "gemini-2.5-pro": ("gemini-2.5-flash", "gemini-2.0-flash"),
+}
 
 
 def generate_srt(
@@ -115,21 +128,76 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
     client = genai.Client(api_key=api_key)
     mime_type = mimetypes.guess_type(path.name)[0] or "audio/wav"
     media_bytes = path.read_bytes()
+    models_to_try = [model, *MODEL_FALLBACKS.get(model, ())]
+    last_error: Exception | None = None
 
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Part.from_bytes(data=media_bytes, mime_type=mime_type),
-            PROMPT,
-        ],
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            response_mime_type="application/json",
-        ),
+    for candidate_model in models_to_try:
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=candidate_model,
+                    contents=[
+                        types.Part.from_bytes(data=media_bytes, mime_type=mime_type),
+                        PROMPT,
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                    ),
+                )
+                payload = _load_json(response.text or "")
+                raw_segments = payload.get("segments", [])
+                return [_segment_from_json(item) for item in raw_segments]
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                repaired = _repair_json_with_gemini(client, types, candidate_model, response.text or "")
+                if repaired:
+                    return [_segment_from_json(item) for item in repaired.get("segments", [])]
+            except Exception as exc:
+                last_error = exc
+                if not _is_retryable_error(exc):
+                    break
+                time.sleep(2**attempt)
+
+    raise RuntimeError(f"Gemini transcription failed after retries: {last_error}")
+
+
+def _repair_json_with_gemini(client: Any, types: Any, model: str, bad_text: str) -> dict[str, Any] | None:
+    candidate = _extract_json_object(bad_text)
+    if candidate:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=[REPAIR_PROMPT, bad_text[:12000]],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                response_mime_type="application/json",
+            ),
+        )
+        return _load_json(response.text or "")
+    except Exception:
+        return None
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "503",
+            "unavailable",
+            "timed out",
+            "timeout",
+            "deadline",
+            "rate limit",
+            "temporarily",
+        )
     )
-    payload = _load_json(response.text or "")
-    raw_segments = payload.get("segments", [])
-    return [_segment_from_json(item) for item in raw_segments]
 
 
 def _load_json(text: str) -> dict[str, Any]:
@@ -137,7 +205,42 @@ def _load_json(text: str) -> dict[str, Any]:
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
         cleaned = re.sub(r"\s*```$", "", cleaned)
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        extracted = _extract_json_object(cleaned)
+        if extracted:
+            return json.loads(extracted)
+        raise
+
+
+def _extract_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text[start:], start=start):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
 
 
 def _segment_from_json(item: dict[str, Any]) -> Segment:

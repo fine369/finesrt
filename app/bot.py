@@ -184,7 +184,10 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await status.edit_text(f"រក command មិនឃើញ៖ {exc.filename}. សូមដំឡើង ffmpeg។")
         return
     except Exception as exc:
-        await status.edit_text(f"មានបញ្ហាពេលបង្កើត SRT: {exc}")
+        await status.edit_text(
+            "មានបញ្ហាពេលបង្កើត SRT។ សូមសាកល្បងម្ដងទៀត ឬប្តូរ Model AI ទៅ gemini-2.5-flash ក្នុង /menu។\n\n"
+            f"Error: {exc}"
+        )
         return
 
     await status.edit_text("រួចរាល់។ នេះជា Khmer SRT។")

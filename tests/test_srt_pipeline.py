@@ -1,4 +1,4 @@
-from app.srt_pipeline import Segment, _correct_timing, _split_into_subtitle_beats, _to_srt
+from app.srt_pipeline import Segment, _correct_timing, _load_json, _split_into_subtitle_beats, _to_srt
 
 
 def test_split_space_separated_khmer_units():
@@ -39,3 +39,9 @@ def test_can_group_two_or_three_words_per_subtitle():
 
     assert [beat.text for beat in two_word_beats] == ["ជួយ មាន", "អត់ មាន", "ឃើញ"]
     assert [beat.text for beat in three_word_beats] == ["one two three", "four"]
+
+
+def test_load_json_extracts_object_from_extra_text():
+    payload = _load_json('noise before {"segments":[{"start":0,"end":1,"text":"ok"}]} noise after')
+
+    assert payload["segments"][0]["text"] == "ok"
