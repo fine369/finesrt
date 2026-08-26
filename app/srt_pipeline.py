@@ -6,6 +6,8 @@ import mimetypes
 import re
 import subprocess
 import time
+import wave
+from array import array
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -82,6 +84,9 @@ MODEL_FALLBACKS = {
 }
 RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-2.5-flash"
 TRANSCRIPTION_CHUNK_SECONDS = 55.0
+ENERGY_FRAME_SECONDS = 0.01
+TIMING_SNAP_BEFORE_SECONDS = 0.28
+TIMING_SNAP_AFTER_SECONDS = 0.38
 
 
 def generate_srt(
@@ -96,7 +101,9 @@ def generate_srt(
     duration = _duration_seconds(media_path)
     segments = _transcribe_media(media_path, output_dir, api_key, model, duration)
     beat_segments = _split_into_subtitle_beats(segments, words_per_subtitle)
-    corrected = _correct_timing(beat_segments, duration)
+    alignment_audio = _prepare_alignment_audio(media_path, output_dir)
+    refined = _refine_timing_with_audio(beat_segments, alignment_audio, duration)
+    corrected = _correct_timing(refined, duration)
     srt_path = output_dir / f"{input_path.stem}.km.srt"
     srt_path.write_text(_to_srt(corrected), encoding="utf-8")
     return srt_path
@@ -107,6 +114,28 @@ def _prepare_media(input_path: Path, output_dir: Path) -> Path:
         return input_path
 
     audio_path = output_dir / f"{input_path.stem}.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(input_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            str(audio_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return audio_path
+
+
+def _prepare_alignment_audio(input_path: Path, output_dir: Path) -> Path:
+    audio_path = output_dir / f"{input_path.stem}.align.wav"
     subprocess.run(
         [
             "ffmpeg",
@@ -415,6 +444,147 @@ def _word_segments_from_json(parent: dict[str, Any], word_items: list[Any]) -> l
         segments.append(Segment(start=max(0.0, start), end=max(0.0, end), text=text))
 
     return segments or [_segment_from_json(parent)]
+
+
+def _refine_timing_with_audio(segments: list[Segment], audio_path: Path, duration: float | None) -> list[Segment]:
+    try:
+        speech_frames, frame_seconds = _speech_activity_frames(audio_path)
+    except Exception:
+        return segments
+
+    if not speech_frames:
+        return segments
+
+    refined = [
+        _snap_segment_to_speech(segment, speech_frames, frame_seconds, duration)
+        for segment in segments
+    ]
+    return _keep_segments_in_order(refined, duration)
+
+
+def _speech_activity_frames(audio_path: Path) -> tuple[list[bool], float]:
+    with wave.open(str(audio_path), "rb") as wav:
+        channels = wav.getnchannels()
+        sample_width = wav.getsampwidth()
+        sample_rate = wav.getframerate()
+        raw = wav.readframes(wav.getnframes())
+
+    if sample_width != 2:
+        return [], ENERGY_FRAME_SECONDS
+
+    samples = array("h")
+    samples.frombytes(raw)
+    if channels > 1:
+        samples = array("h", samples[::channels])
+
+    frame_size = max(1, int(sample_rate * ENERGY_FRAME_SECONDS))
+    energies: list[float] = []
+    for index in range(0, len(samples), frame_size):
+        frame = samples[index : index + frame_size]
+        if not frame:
+            continue
+        rms = math.sqrt(sum(sample * sample for sample in frame) / len(frame))
+        energies.append(rms)
+
+    if not energies:
+        return [], ENERGY_FRAME_SECONDS
+
+    sorted_energy = sorted(energies)
+    noise_floor = sorted_energy[int(len(sorted_energy) * 0.2)]
+    active_level = sorted_energy[int(len(sorted_energy) * 0.75)]
+    threshold = max(120.0, noise_floor * 2.2, active_level * 0.28)
+    speech_frames = [energy >= threshold for energy in energies]
+    return _smooth_speech_frames(speech_frames), ENERGY_FRAME_SECONDS
+
+
+def _smooth_speech_frames(frames: list[bool]) -> list[bool]:
+    smoothed = frames[:]
+    bridge = int(0.08 / ENERGY_FRAME_SECONDS)
+    pad = int(0.025 / ENERGY_FRAME_SECONDS)
+
+    last_true: int | None = None
+    for index, is_speech in enumerate(frames):
+        if not is_speech:
+            continue
+        if last_true is not None and index - last_true <= bridge:
+            for fill_index in range(last_true, index + 1):
+                smoothed[fill_index] = True
+        last_true = index
+
+    padded = smoothed[:]
+    for index, is_speech in enumerate(smoothed):
+        if not is_speech:
+            continue
+        start = max(0, index - pad)
+        end = min(len(padded), index + pad + 1)
+        for fill_index in range(start, end):
+            padded[fill_index] = True
+    return padded
+
+
+def _snap_segment_to_speech(
+    segment: Segment,
+    speech_frames: list[bool],
+    frame_seconds: float,
+    duration: float | None,
+) -> Segment:
+    window_start = max(0.0, segment.start - TIMING_SNAP_BEFORE_SECONDS)
+    window_end = segment.start + TIMING_SNAP_AFTER_SECONDS
+    speech_start = _first_speech_time(speech_frames, frame_seconds, window_start, window_end)
+
+    end_window_start = max(0.0, segment.end - TIMING_SNAP_AFTER_SECONDS)
+    end_window_end = segment.end + TIMING_SNAP_BEFORE_SECONDS
+    if duration is not None:
+        end_window_end = min(duration, end_window_end)
+    speech_end = _last_speech_time(speech_frames, frame_seconds, end_window_start, end_window_end)
+
+    start = speech_start if speech_start is not None else segment.start
+    end = speech_end if speech_end is not None else segment.end
+    if end <= start:
+        end = segment.end
+    return Segment(start=start, end=end, text=segment.text)
+
+
+def _first_speech_time(frames: list[bool], frame_seconds: float, start: float, end: float) -> float | None:
+    first = max(0, int(start / frame_seconds))
+    last = min(len(frames), int(math.ceil(end / frame_seconds)))
+    for index in range(first, last):
+        if frames[index]:
+            return index * frame_seconds
+    return None
+
+
+def _last_speech_time(frames: list[bool], frame_seconds: float, start: float, end: float) -> float | None:
+    first = max(0, int(start / frame_seconds))
+    last = min(len(frames), int(math.ceil(end / frame_seconds)))
+    for index in range(last - 1, first - 1, -1):
+        if frames[index]:
+            return (index + 1) * frame_seconds
+    return None
+
+
+def _keep_segments_in_order(segments: list[Segment], duration: float | None) -> list[Segment]:
+    ordered = [segment for segment in segments if segment.text]
+    ordered.sort(key=lambda segment: (segment.start, segment.end))
+
+    for index, segment in enumerate(ordered):
+        start = max(0.0, segment.start)
+        end = max(start + 0.04, segment.end)
+
+        if index:
+            previous = ordered[index - 1]
+            if start < previous.end:
+                boundary = (previous.end + start) / 2
+                previous.end = max(previous.start + 0.04, boundary - 0.005)
+                start = max(start, previous.end + 0.005)
+
+        if duration is not None:
+            start = min(start, max(0.0, duration - 0.04))
+            end = min(end, duration)
+
+        ordered[index] = Segment(start, end, segment.text)
+
+    return ordered
 
 
 def _correct_timing(segments: list[Segment], duration: float | None) -> list[Segment]:

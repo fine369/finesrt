@@ -2,8 +2,10 @@ from app.srt_pipeline import (
     Segment,
     _correct_timing,
     _friendly_gemini_error,
+    _keep_segments_in_order,
     _load_json,
     _offset_segments,
+    _snap_segment_to_speech,
     _segments_from_payload,
     _split_into_subtitle_beats,
     _to_srt,
@@ -47,6 +49,26 @@ def test_correct_timing_preserves_long_spoken_word_duration():
 
     assert corrected[0].start == 0
     assert corrected[0].end == 2.0
+
+
+def test_snap_segment_to_nearby_speech_activity():
+    frames = [False] * 100
+    for index in range(32, 71):
+        frames[index] = True
+
+    snapped = _snap_segment_to_speech(Segment(0.1, 0.9, "សាក"), frames, 0.01, duration=1.0)
+
+    assert snapped.start == 0.32
+    assert snapped.end == 0.71
+
+
+def test_keep_segments_in_order_prevents_overlap_after_snapping():
+    ordered = _keep_segments_in_order(
+        [Segment(0.0, 0.8, "one"), Segment(0.6, 1.0, "two")],
+        duration=1.0,
+    )
+
+    assert ordered[0].end < ordered[1].start
 
 
 def test_can_group_two_or_three_words_per_subtitle():
