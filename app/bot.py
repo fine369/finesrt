@@ -19,7 +19,7 @@ from app.settings import (
     set_gemini_model,
     set_words_per_subtitle,
 )
-from app.srt_pipeline import generate_srt
+from app.srt_pipeline import GeminiTranscriptionError, RECOMMENDED_TRANSCRIPTION_MODEL, generate_srt
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,12 +31,12 @@ load_dotenv(ROOT / ".env")
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 ALLOWED_USERNAME = os.getenv("ALLOWED_TELEGRAM_USERNAME", "petfine").lstrip("@").lower()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", RECOMMENDED_TRANSCRIPTION_MODEL)
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 PORT = int(os.getenv("PORT", "8080"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", uuid.uuid4().hex)
-MODEL_CHOICES = ("gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash")
+MODEL_CHOICES = (RECOMMENDED_TRANSCRIPTION_MODEL, "gemini-2.5-pro", "gemini-2.0-flash", "gemini-3.6-flash")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -116,7 +116,11 @@ async def handle_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if data == "menu:model":
-        await query.edit_message_text("ជ្រើស Model AI:", reply_markup=_model_menu())
+        await query.edit_message_text(
+            "ជ្រើស Model AI សម្រាប់ transcript សម្លេងទៅជា SRT timing:\n\n"
+            f"Recommended: {RECOMMENDED_TRANSCRIPTION_MODEL}",
+            reply_markup=_model_menu(),
+        )
         return
 
     if data == "menu:words":
@@ -183,10 +187,14 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except FileNotFoundError as exc:
         await status.edit_text(f"រក command មិនឃើញ៖ {exc.filename}. សូមដំឡើង ffmpeg។")
         return
+    except GeminiTranscriptionError as exc:
+        await status.edit_text(exc.user_message)
+        return
     except Exception as exc:
         await status.edit_text(
-            "មានបញ្ហាពេលបង្កើត SRT។ សូមសាកល្បងម្ដងទៀត ឬប្តូរ Model AI ទៅ gemini-2.5-flash ក្នុង /menu។\n\n"
-            f"Error: {exc}"
+            "មានបញ្ហាពេលបង្កើត SRT។ នេះគឺជា bot transcript សម្លេង/video ទៅ SRT អក្សរលោតតាមមាត់និយាយ។ "
+            f"សូមប្រើ model {RECOMMENDED_TRANSCRIPTION_MODEL} ក្នុង /menu ហើយសាកម្តងទៀត។\n\n"
+            f"Error detail: {_short_error(exc)}"
         )
         return
 
@@ -238,11 +246,21 @@ def _main_menu() -> InlineKeyboardMarkup:
 def _model_menu() -> InlineKeyboardMarkup:
     current = get_gemini_model(GEMINI_MODEL)
     rows = [
-        [InlineKeyboardButton(f"{'✓ ' if model == current else ''}{model}", callback_data=f"model:{model}")]
+        [
+            InlineKeyboardButton(
+                f"{'✓ ' if model == current else ''}{model}{' ✅ សម្រាប់ SRT' if model == RECOMMENDED_TRANSCRIPTION_MODEL else ''}",
+                callback_data=f"model:{model}",
+            )
+        ]
         for model in MODEL_CHOICES
     ]
     rows.append([InlineKeyboardButton("Back", callback_data="menu:back")])
     return InlineKeyboardMarkup(rows)
+
+
+def _short_error(exc: Exception) -> str:
+    text = str(exc)
+    return text if len(text) <= 350 else text[:347] + "..."
 
 
 def _words_menu() -> InlineKeyboardMarkup:

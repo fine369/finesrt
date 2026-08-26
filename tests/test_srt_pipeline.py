@@ -1,6 +1,7 @@
 from app.srt_pipeline import (
     Segment,
     _correct_timing,
+    _friendly_gemini_error,
     _load_json,
     _offset_segments,
     _segments_from_payload,
@@ -83,3 +84,17 @@ def test_offsets_segments_from_later_audio_chunks():
 
     assert segments[0] == Segment(110.2, 111.4, "YouTube")
     assert segments[1] == Segment(111.4, 112.0, "បង")
+
+
+def test_friendly_error_explains_api_key_problem():
+    message = _friendly_gemini_error(Exception("API key not valid"), ["gemini-2.5-flash"])
+
+    assert "API key" in message
+    assert "/setgemini" in message
+
+
+def test_friendly_error_explains_unsupported_model():
+    message = _friendly_gemini_error(Exception("404 model not found"), ["gemini-3.6-flash", "gemini-2.5-flash"])
+
+    assert "Model AI" in message
+    assert "gemini-2.5-flash" in message

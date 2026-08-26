@@ -18,6 +18,14 @@ class Segment:
     text: str
 
 
+class GeminiTranscriptionError(RuntimeError):
+    """A Gemini failure with a user-safe Khmer explanation."""
+
+    def __init__(self, user_message: str, technical_message: str = "") -> None:
+        super().__init__(technical_message or user_message)
+        self.user_message = user_message
+
+
 PROMPT = """
 You are a precise bilingual Khmer/English subtitle transcription engine.
 
@@ -69,6 +77,7 @@ MODEL_FALLBACKS = {
     "gemini-3.6-flash": ("gemini-2.5-flash", "gemini-2.0-flash"),
     "gemini-2.5-pro": ("gemini-2.5-flash", "gemini-2.0-flash"),
 }
+RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-2.5-flash"
 TRANSCRIPTION_CHUNK_SECONDS = 55.0
 
 
@@ -233,7 +242,10 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
                     break
                 time.sleep(2**attempt)
 
-    raise RuntimeError(f"Gemini transcription failed after retries: {last_error}")
+    raise GeminiTranscriptionError(
+        _friendly_gemini_error(last_error, models_to_try),
+        f"Gemini transcription failed after retries: {last_error}",
+    )
 
 
 def _repair_json_with_gemini(client: Any, types: Any, model: str, bad_text: str) -> dict[str, Any] | None:
@@ -271,6 +283,51 @@ def _is_retryable_error(exc: Exception) -> bool:
             "rate limit",
             "temporarily",
         )
+    )
+
+
+def _friendly_gemini_error(exc: Exception | None, models_tried: list[str]) -> str:
+    raw = str(exc or "").lower()
+    tried = ", ".join(models_tried)
+
+    if any(marker in raw for marker in ("api key not valid", "invalid api key", "api_key_invalid", "401")):
+        return (
+            "Gemini API key មិនដំណើរការ។ សូមពិនិត្យ key ឬដាក់ key ថ្មីដោយប្រើ "
+            "/setgemini YOUR_GEMINI_API_KEY។"
+        )
+
+    if any(marker in raw for marker in ("permission", "403", "forbidden", "access denied")):
+        return (
+            "Gemini API key គ្មាន permission សម្រាប់ប្រើ Gemini API ឬ project នេះ។ "
+            "សូមពិនិត្យ API key/project នៅ Google AI Studio រួចដាក់ key ថ្មី។"
+        )
+
+    if any(marker in raw for marker in ("quota", "429", "rate limit", "resource exhausted")):
+        return (
+            "Gemini API ប្រើលើស quota ឬ rate limit។ សូមរង់ចាំបន្តិច ឬប្រើ API key ផ្សេង។"
+        )
+
+    if any(marker in raw for marker in ("not found", "404", "unsupported", "not supported", "model")):
+        return (
+            "Model AI ដែលបានជ្រើសមិនគាំទ្រ audio transcription/SRT ឬមិនមានលើ API key នេះ។ "
+            f"Bot បានសាក model ទាំងនេះ: {tried}។ សូមជ្រើស {RECOMMENDED_TRANSCRIPTION_MODEL} ក្នុង /menu។"
+        )
+
+    if any(marker in raw for marker in ("503", "unavailable", "timed out", "timeout", "deadline", "temporarily")):
+        return (
+            "Gemini API មិនទាន់ឆ្លើយតប ឬ timeout ពេលស្តាប់សម្លេង។ "
+            "សូមសាកល្បងម្ដងទៀត; បើ file វែង bot នឹងកាត់ជា chunk ដើម្បីបន្តឲ្យពេញ។"
+        )
+
+    if isinstance(exc, json.JSONDecodeError) or "json" in raw or "expecting value" in raw:
+        return (
+            "Gemini បានឆ្លើយតបមិនមែនជា JSON subtitle timing ត្រឹមត្រូវ។ "
+            f"សូមសាកម្តងទៀត ឬជ្រើស {RECOMMENDED_TRANSCRIPTION_MODEL} ក្នុង /menu។"
+        )
+
+    return (
+        "Gemini មិនអាចបង្កើត transcript ទៅជា SRT បានទេ។ "
+        f"សម្រាប់ app យើង សូមប្រើ model {RECOMMENDED_TRANSCRIPTION_MODEL} ព្រោះវាសមសម្រាប់ audio/video transcription និង timing។"
     )
 
 
