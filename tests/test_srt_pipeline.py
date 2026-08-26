@@ -4,6 +4,7 @@ from app.srt_pipeline import (
     _friendly_gemini_error,
     _keep_segments_in_order,
     _load_json,
+    _models_to_try,
     _offset_segments,
     _snap_segment_to_speech,
     _segments_from_payload,
@@ -123,7 +124,11 @@ def test_friendly_error_explains_api_key_problem():
 
 
 def test_friendly_error_explains_unsupported_model():
-    message = _friendly_gemini_error(Exception("404 model not found"), ["gemini-3.6-flash", "gemini-2.5-flash"])
+    message = _friendly_gemini_error(Exception("404 model not found"), ["gemini-3.6-flash"])
 
     assert "Model AI" in message
     assert "gemini-2.5-flash" in message
+
+
+def test_uses_selected_model_without_silent_fallback():
+    assert _models_to_try("gemini-3.6-flash") == ["gemini-3.6-flash"]

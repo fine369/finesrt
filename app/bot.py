@@ -137,7 +137,15 @@ async def handle_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         model = data.split(":", 1)[1]
         if model in MODEL_CHOICES:
             set_gemini_model(model)
-        await query.edit_message_text(_settings_text(), reply_markup=_main_menu())
+            await query.edit_message_text(
+                f"បានប្តូរ Model AI ទៅ: {model}\n\n"
+                "Bot នឹងប្រើ model នេះពិតៗសម្រាប់ transcript សម្លេង/video ទៅជា SRT។ "
+                "បើ model នេះមិនគាំទ្រ audio/SRT, bot នឹងបង្ហាញ error ច្បាស់។\n\n"
+                + _settings_text(),
+                reply_markup=_main_menu(),
+            )
+        else:
+            await query.edit_message_text("Model នេះមិនមានក្នុង menu ទេ។", reply_markup=_main_menu())
         return
 
     if data.startswith("words:"):
@@ -181,13 +189,17 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await tg_file.download_to_drive(custom_path=input_path)
 
     try:
-        await status.edit_text("Gemini កំពុងស្តាប់ និងបំបែកជា segment មាន timestamp...")
+        active_model = get_gemini_model(GEMINI_MODEL)
+        await status.edit_text(
+            "Gemini កំពុងស្តាប់ និងបំបែកជា segment មាន timestamp...\n"
+            f"Model កំពុងប្រើពិតៗ: {active_model}"
+        )
         srt_path = await asyncio.to_thread(
             generate_srt,
             input_path,
             OUTPUT_DIR,
             get_gemini_api_key(),
-            get_gemini_model(GEMINI_MODEL),
+            active_model,
             get_words_per_subtitle(),
         )
     except FileNotFoundError as exc:

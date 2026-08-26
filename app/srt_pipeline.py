@@ -77,11 +77,6 @@ Return ONLY valid JSON in this exact shape:
 Fix this invalid subtitle JSON. Keep the same data. Remove any prose, markdown, or trailing broken text.
 """.strip()
 
-MODEL_FALLBACKS = {
-    "gemini-3.7-flash": ("gemini-2.5-flash", "gemini-2.0-flash"),
-    "gemini-3.6-flash": ("gemini-2.5-flash", "gemini-2.0-flash"),
-    "gemini-2.5-pro": ("gemini-2.5-flash", "gemini-2.0-flash"),
-}
 RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-2.5-flash"
 TRANSCRIPTION_CHUNK_SECONDS = 55.0
 ENERGY_FRAME_SECONDS = 0.01
@@ -244,7 +239,7 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
     client = genai.Client(api_key=api_key)
     mime_type = mimetypes.guess_type(path.name)[0] or "audio/wav"
     media_bytes = path.read_bytes()
-    models_to_try = [model, *MODEL_FALLBACKS.get(model, ())]
+    models_to_try = _models_to_try(model)
     last_error: Exception | None = None
 
     for candidate_model in models_to_try:
@@ -361,6 +356,10 @@ def _friendly_gemini_error(exc: Exception | None, models_tried: list[str]) -> st
         "Gemini មិនអាចបង្កើត transcript ទៅជា SRT បានទេ។ "
         f"សម្រាប់ app យើង សូមប្រើ model {RECOMMENDED_TRANSCRIPTION_MODEL} ព្រោះវាសមសម្រាប់ audio/video transcription និង timing។"
     )
+
+
+def _models_to_try(model: str) -> list[str]:
+    return [model]
 
 
 def _load_json(text: str) -> dict[str, Any]:
