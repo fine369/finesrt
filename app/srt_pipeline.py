@@ -49,6 +49,8 @@ Task:
 - Accuracy is the first priority. Transcribe the exact words the speaker says.
 - Do not guess a different sentence just to make subtitles short.
 - First hear the full spoken phrase accurately, then split it into word timings.
+- Word start/end times must follow the real mouth/speech timing from the audio, not equal spacing.
+- Preserve long spoken words/syllables for their full spoken duration.
 - If the speaker says Khmer, write Khmer script.
 - If the speaker says English, write English words in Latin script.
 - If the speaker mixes Khmer and English, preserve that mix exactly.
@@ -74,6 +76,7 @@ Fix this invalid subtitle JSON. Keep the same data. Remove any prose, markdown, 
 """.strip()
 
 MODEL_FALLBACKS = {
+    "gemini-3.7-flash": ("gemini-2.5-flash", "gemini-2.0-flash"),
     "gemini-3.6-flash": ("gemini-2.5-flash", "gemini-2.0-flash"),
     "gemini-2.5-pro": ("gemini-2.5-flash", "gemini-2.0-flash"),
 }
@@ -429,17 +432,9 @@ def _correct_timing(segments: list[Segment], duration: float | None) -> list[Seg
             if start < previous.end + min_gap:
                 previous.end = max(previous.start + 0.08, start - min_gap)
 
-        min_duration = min(0.35, max(0.12, len(segment.text) / 60.0))
-        max_duration = max(0.32, min(0.9, len(segment.text) / 13.0))
         if end <= start:
+            min_duration = min(0.35, max(0.12, len(segment.text) / 60.0))
             end = start + min_duration
-        elif end - start < min_duration:
-            next_start = _next_start_after(usable, segment)
-            available_end = next_start - 0.01 if next_start is not None else None
-            end = start + min_duration
-            if available_end is not None:
-                end = min(end, available_end)
-        end = min(end, start + max_duration)
 
         if duration is not None:
             start = min(start, max(0.0, duration - 0.1))

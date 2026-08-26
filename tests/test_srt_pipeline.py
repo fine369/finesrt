@@ -42,6 +42,13 @@ def test_fast_speech_keeps_timing_inside_original_window():
     assert all((segment.end - segment.start) <= 0.35 for segment in corrected)
 
 
+def test_correct_timing_preserves_long_spoken_word_duration():
+    corrected = _correct_timing([Segment(0, 2.0, "អាបង")], duration=2.0)
+
+    assert corrected[0].start == 0
+    assert corrected[0].end == 2.0
+
+
 def test_can_group_two_or_three_words_per_subtitle():
     two_word_beats = _split_into_subtitle_beats([Segment(0, 2, "ជួយ មាន អត់ មាន ឃើញ")], 2)
     three_word_beats = _split_into_subtitle_beats([Segment(0, 2, "one two three four")], 3)
