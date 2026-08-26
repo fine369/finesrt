@@ -22,3 +22,12 @@ def test_corrected_srt_is_short_beat_style():
 
     assert "hello\n\n2" in srt
     assert "បង" in srt
+
+
+def test_fast_speech_keeps_timing_inside_original_window():
+    beats = _split_into_subtitle_beats([Segment(0, 0.7, "ជួយ មាន អត់ មាន ឃើញ")])
+    corrected = _correct_timing(beats, duration=0.7)
+
+    assert len(corrected) == 5
+    assert corrected[-1].end <= 0.7
+    assert all((segment.end - segment.start) <= 0.35 for segment in corrected)

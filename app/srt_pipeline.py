@@ -9,9 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from google import genai
-from google.genai import types
-
 
 @dataclass
 class Segment:
@@ -106,6 +103,9 @@ def _duration_seconds(path: Path) -> float | None:
 
 
 def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segment]:
+    from google import genai
+    from google.genai import types
+
     client = genai.Client(api_key=api_key)
     mime_type = mimetypes.guess_type(path.name)[0] or "audio/wav"
     media_bytes = path.read_bytes()
@@ -152,15 +152,20 @@ def _correct_timing(segments: list[Segment], duration: float | None) -> list[Seg
 
         if corrected:
             previous = corrected[-1]
-            min_gap = 0.06
+            min_gap = 0.01
             if start < previous.end + min_gap:
-                start = previous.end + min_gap
+                previous.end = max(previous.start + 0.08, start - min_gap)
 
-        min_duration = min(0.75, max(0.28, len(segment.text) / 28.0))
-        max_duration = max(0.7, min(1.35, len(segment.text) / 8.5))
+        min_duration = min(0.35, max(0.12, len(segment.text) / 60.0))
+        max_duration = max(0.32, min(0.9, len(segment.text) / 13.0))
         if end <= start:
             end = start + min_duration
-        end = max(end, start + min_duration)
+        elif end - start < min_duration:
+            next_start = _next_start_after(usable, segment)
+            available_end = next_start - 0.01 if next_start is not None else None
+            end = start + min_duration
+            if available_end is not None:
+                end = min(end, available_end)
         end = min(end, start + max_duration)
 
         if duration is not None:
@@ -171,6 +176,17 @@ def _correct_timing(segments: list[Segment], duration: float | None) -> list[Seg
             corrected.append(Segment(start=start, end=end, text=_clean_text(segment.text)))
 
     return corrected
+
+
+def _next_start_after(segments: list[Segment], current: Segment) -> float | None:
+    try:
+        current_index = segments.index(current)
+    except ValueError:
+        return None
+    for segment in segments[current_index + 1 :]:
+        if segment.start > current.start:
+            return segment.start
+    return None
 
 
 def _split_into_subtitle_beats(segments: list[Segment]) -> list[Segment]:

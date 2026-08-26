@@ -49,7 +49,7 @@ Open the bot in Telegram as `@petfine`, send `/start`, then set your Gemini key:
 /setgemini YOUR_GEMINI_API_KEY
 ```
 
-After that, upload an audio or video file. The bot replies with a Khmer/English `.srt` file. Subtitles are split into short word beats, so each space-separated spoken unit appears as its own timed subtitle.
+After that, upload an audio or video file. The bot replies with a Khmer/English `.srt` file. Subtitles are split into short word beats, so each space-separated spoken unit appears as its own timed subtitle. Fast speech uses tighter timing so the subtitles do not lag behind the voice.
 
 Use `/status` to check whether the Gemini key is configured.
 
