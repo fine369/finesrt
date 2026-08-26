@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: khmer-srt-telegram-bot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: ALLOWED_TELEGRAM_USERNAME
+        value: petfine
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: MAX_UPLOAD_MB
+        value: 200
