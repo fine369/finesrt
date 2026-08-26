@@ -31,6 +31,7 @@ Required values:
 - `GEMINI_API_KEY`
 - `ALLOWED_TELEGRAM_USERNAME=petfine`
 - `WEBHOOK_URL` only on Render, for example `https://khmer-srt-telegram-bot.onrender.com`
+- `WEBHOOK_SECRET` only on Render, any random secret string
 
 3. Install `ffmpeg` if you want to process video files. Audio files can work directly, but video-to-audio extraction needs `ffmpeg`.
 
@@ -65,6 +66,7 @@ For Render:
    - `TELEGRAM_BOT_TOKEN`
    - `GEMINI_API_KEY`
    - `WEBHOOK_URL`, for example `https://khmer-srt-telegram-bot.onrender.com`
+   - `WEBHOOK_SECRET`, or let Render generate it from `render.yaml`
    - `ALLOWED_TELEGRAM_USERNAME=petfine`
 5. Deploy.
 

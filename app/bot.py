@@ -27,6 +27,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 PORT = int(os.getenv("PORT", "8080"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").rstrip("/")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", uuid.uuid4().hex)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -152,7 +153,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.VIDEO | filters.AUDIO | filters.VOICE | filters.Document.ALL, handle_media))
 
     if WEBHOOK_URL:
-        webhook_path = TELEGRAM_BOT_TOKEN
+        webhook_path = WEBHOOK_SECRET
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
