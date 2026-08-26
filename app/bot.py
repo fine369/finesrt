@@ -36,7 +36,7 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 PORT = int(os.getenv("PORT", "8080"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", uuid.uuid4().hex)
-MODEL_CHOICES = ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash")
+MODEL_CHOICES = ("gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
