@@ -245,7 +245,7 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
     last_error: Exception | None = None
 
     for candidate_model in models_to_try:
-        for attempt in range(3):
+        for attempt in range(5):
             text = ""
             try:
                 text = _generate_content_rest(
@@ -267,7 +267,7 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
                 last_error = exc
                 if not _is_retryable_error(exc):
                     break
-                time.sleep(2**attempt)
+                time.sleep(min(12, 2**attempt))
 
     raise GeminiTranscriptionError(
         _friendly_gemini_error(last_error, models_to_try),
@@ -367,16 +367,17 @@ def _friendly_gemini_error(exc: Exception | None, models_tried: list[str]) -> st
             "Gemini API ប្រើលើស quota ឬ rate limit។ សូមរង់ចាំបន្តិច ឬប្រើ API key ផ្សេង។"
         )
 
-    if any(marker in raw for marker in ("not found", "404", "unsupported", "not supported", "model")):
+    if any(marker in raw for marker in ("not found", "404", "unsupported", "not supported")):
         return (
             "Model AI ដែលបានជ្រើសមិនគាំទ្រ audio transcription/SRT ឬមិនមានលើ API key នេះ។ "
             f"Bot បានសាក model ទាំងនេះ: {tried}។ សូមជ្រើស {RECOMMENDED_TRANSCRIPTION_MODEL} ក្នុង /menu។"
         )
 
-    if any(marker in raw for marker in ("503", "unavailable", "timed out", "timeout", "deadline", "temporarily")):
+    if any(marker in raw for marker in ("high demand", "503", "unavailable", "timed out", "timeout", "deadline", "temporarily")):
         return (
-            "Gemini API មិនទាន់ឆ្លើយតប ឬ timeout ពេលស្តាប់សម្លេង។ "
-            "សូមសាកល្បងម្ដងទៀត; បើ file វែង bot នឹងកាត់ជា chunk ដើម្បីបន្តឲ្យពេញ។"
+            "Gemini API កំពុងរវល់ខ្លាំង ឬ timeout ពេលស្តាប់សម្លេង។ "
+            "នេះជាបញ្ហា temporary ពី Google មិនមែន API key ខូចទេ។ "
+            "សូមសាកល្បងម្ដងទៀត បន្តិចទៀត ឬប្តូរ Model AI ទៅ gemini-3.6-flash ក្នុង /menu។"
         )
 
     if isinstance(exc, json.JSONDecodeError) or "json" in raw or "expecting value" in raw:
