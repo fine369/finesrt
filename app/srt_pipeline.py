@@ -302,7 +302,10 @@ def _generate_content_rest(api_key: str, model: str, parts: list[dict[str, Any]]
         raise RuntimeError(f"Gemini HTTP {exc.code}: {detail}") from exc
 
     parts_payload = payload.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-    return "".join(str(part.get("text", "")) for part in parts_payload)
+    text = "".join(str(part.get("text", "")) for part in parts_payload)
+    if not text and payload.get("candidates", [{}])[0].get("finishReason") == "STOP":
+        return '{"segments":[]}'
+    return text
 
 
 def _repair_json_with_gemini(api_key: str, model: str, bad_text: str) -> dict[str, Any] | None:
