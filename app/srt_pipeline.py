@@ -453,7 +453,7 @@ def _extract_json_object(text: str) -> str | None:
 
 
 def _segment_from_json(item: dict[str, Any]) -> Segment:
-    text = str(item.get("text", "")).strip()
+    text = _srt_safe_text(str(item.get("text", "")))
     start = float(item.get("start", 0))
     end = float(item.get("end", start + 1.5))
     return Segment(start=max(0.0, start), end=max(0.0, end), text=text)
@@ -478,8 +478,8 @@ def _word_segments_from_json(parent: dict[str, Any], word_items: list[Any]) -> l
     for item in word_items:
         if not isinstance(item, dict):
             continue
-        text = str(item.get("text", "")).strip()
-        if not text:
+        text = _srt_safe_text(str(item.get("text", "")))
+        if not text.strip():
             continue
         start = float(item.get("start", parent_start))
         end = float(item.get("end", start))
@@ -501,7 +501,7 @@ def _refine_timing_with_audio(segments: list[Segment], audio_path: Path, duratio
     if not speech_frames:
         return segments
 
-    ordered = [segment for segment in segments if segment.text]
+    ordered = [segment for segment in segments if segment.text.strip()]
     ordered.sort(key=lambda segment: (segment.start, segment.end))
     refined = []
     for index, segment in enumerate(ordered):
@@ -631,7 +631,7 @@ def _last_speech_time(frames: list[bool], frame_seconds: float, start: float, en
 
 
 def _keep_segments_in_order(segments: list[Segment], duration: float | None) -> list[Segment]:
-    ordered = [segment for segment in segments if segment.text]
+    ordered = [segment for segment in segments if segment.text.strip()]
     ordered.sort(key=lambda segment: (segment.start, segment.end))
 
     for index, segment in enumerate(ordered):
@@ -655,7 +655,7 @@ def _keep_segments_in_order(segments: list[Segment], duration: float | None) -> 
 
 
 def _correct_timing(segments: list[Segment], duration: float | None) -> list[Segment]:
-    usable = [s for s in segments if s.text]
+    usable = [s for s in segments if s.text.strip()]
     usable.sort(key=lambda s: (s.start, s.end))
     corrected: list[Segment] = []
 
@@ -678,7 +678,7 @@ def _correct_timing(segments: list[Segment], duration: float | None) -> list[Seg
             end = min(end, duration)
 
         if end > start:
-            corrected.append(Segment(start=start, end=end, text=_clean_text(segment.text)))
+            corrected.append(Segment(start=start, end=end, text=segment.text))
 
     return corrected
 
@@ -729,13 +729,11 @@ def _split_into_subtitle_beats(segments: list[Segment], words_per_subtitle: int 
 
 
 def _tokenize_spoken_units(text: str) -> list[str]:
-    cleaned = _clean_text(text)
-    if not cleaned:
+    safe_text = _srt_safe_text(text)
+    if not safe_text.strip():
         return []
 
-    spaced = re.sub(r"([,។៕!?;:])", r" \1 ", cleaned)
-    raw_tokens = [token.strip(" \t\r\n,។៕!?;:") for token in spaced.split()]
-    return [token for token in raw_tokens if token]
+    return [token for token in safe_text.split() if token]
 
 
 def _token_weight(token: str) -> float:
@@ -747,6 +745,10 @@ def _token_weight(token: str) -> float:
 
 def _clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _srt_safe_text(text: str) -> str:
+    return text.replace("\r", " ").replace("\n", " ")
 
 
 def _to_srt(segments: list[Segment]) -> str:
