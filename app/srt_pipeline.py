@@ -6,6 +6,10 @@ import mimetypes
 import re
 import subprocess
 import time
+import base64
+import urllib.error
+import urllib.parse
+import urllib.request
 import wave
 from array import array
 from dataclasses import dataclass
@@ -235,10 +239,6 @@ def _duration_seconds(path: Path) -> float | None:
 
 
 def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segment]:
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=api_key)
     mime_type = mimetypes.guess_type(path.name)[0] or "audio/wav"
     media_bytes = path.read_bytes()
     models_to_try = _models_to_try(model)
@@ -246,23 +246,21 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
 
     for candidate_model in models_to_try:
         for attempt in range(3):
+            text = ""
             try:
-                response = client.models.generate_content(
+                text = _generate_content_rest(
+                    api_key=api_key,
                     model=candidate_model,
-                    contents=[
-                        types.Part.from_bytes(data=media_bytes, mime_type=mime_type),
-                        PROMPT,
+                    parts=[
+                        {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(media_bytes).decode("ascii")}},
+                        {"text": PROMPT},
                     ],
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        response_mime_type="application/json",
-                    ),
                 )
-                payload = _load_json(response.text or "")
+                payload = _load_json(text)
                 return _segments_from_payload(payload)
             except json.JSONDecodeError as exc:
                 last_error = exc
-                repaired = _repair_json_with_gemini(client, types, candidate_model, response.text or "")
+                repaired = _repair_json_with_gemini(api_key, candidate_model, text)
                 if repaired:
                     return _segments_from_payload(repaired)
             except Exception as exc:
@@ -277,7 +275,37 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
     )
 
 
-def _repair_json_with_gemini(client: Any, types: Any, model: str, bad_text: str) -> dict[str, Any] | None:
+def _generate_content_rest(api_key: str, model: str, parts: list[dict[str, Any]]) -> str:
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        + urllib.parse.quote(model, safe="")
+        + ":generateContent?key="
+        + urllib.parse.quote(api_key, safe="")
+    )
+    body = json.dumps(
+        {
+            "contents": [{"parts": parts}],
+            "generationConfig": {"temperature": 0.0},
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Gemini HTTP {exc.code}: {detail}") from exc
+
+    parts_payload = payload.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    return "".join(str(part.get("text", "")) for part in parts_payload)
+
+
+def _repair_json_with_gemini(api_key: str, model: str, bad_text: str) -> dict[str, Any] | None:
     candidate = _extract_json_object(bad_text)
     if candidate:
         try:
@@ -286,15 +314,15 @@ def _repair_json_with_gemini(client: Any, types: Any, model: str, bad_text: str)
             pass
 
     try:
-        response = client.models.generate_content(
+        text = _generate_content_rest(
+            api_key=api_key,
             model=model,
-            contents=[REPAIR_PROMPT, bad_text[:12000]],
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                response_mime_type="application/json",
-            ),
+            parts=[
+                {"text": REPAIR_PROMPT},
+                {"text": bad_text[:12000]},
+            ],
         )
-        return _load_json(response.text or "")
+        return _load_json(text)
     except Exception:
         return None
 
