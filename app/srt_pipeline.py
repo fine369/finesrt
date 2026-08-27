@@ -67,6 +67,9 @@ Task:
 - Keep segment.text as the natural full phrase that was spoken.
 - In segment.words, split that exact phrase into spoken words/units with accurate start/end times.
 - Khmer example: if the speaker says "ខ្ញុំស្រលាញ់បង", text must be "ខ្ញុំស្រលាញ់បង" and words must be ["ខ្ញុំ", "ស្រលាញ់", "បង"].
+- Khmer word-level is mandatory: never put two visible Khmer words in the same words[] item.
+- If Khmer words are written with spaces in segment.text, each space-separated Khmer word must become its own words[] item.
+- If a Khmer phrase has no spaces but contains multiple spoken words, split it into natural spoken Khmer word units.
 - Timing example: if "អាបង" is spoken for 2 seconds, the subtitle timing must cover 2 seconds. If it is spoken for 1 second, it must cover 1 second.
 - Use precise start/end times in seconds.
 - Do not merge multiple spoken words into one word item unless Khmer spelling truly requires it.
@@ -96,6 +99,56 @@ TIMING_START_LOOK_BEFORE_SECONDS = 0.18
 TIMING_START_LOOK_AFTER_SECONDS = 0.24
 TIMING_END_LOOK_BEFORE_SECONDS = 0.24
 TIMING_END_LOOK_AFTER_SECONDS = 0.08
+KHMER_WORD_HINTS = tuple(
+    sorted(
+        {
+            "ខ្ញុំ",
+            "អ្នក",
+            "យើង",
+            "គាត់",
+            "បង",
+            "អូន",
+            "ពូ",
+            "មីង",
+            "អាបង",
+            "អាអូន",
+            "ស្រលាញ់",
+            "ស្រឡាញ់",
+            "និយាយ",
+            "ធ្វើ",
+            "ទៅ",
+            "មក",
+            "បាន",
+            "អត់",
+            "មាន",
+            "ឃើញ",
+            "ជួយ",
+            "ចង់",
+            "ដាក់",
+            "យក",
+            "ប្រើ",
+            "បង្កើត",
+            "សរសេរ",
+            "ត្រូវ",
+            "ខុស",
+            "ល្អ",
+            "លឿន",
+            "យឺត",
+            "ពេល",
+            "សម្លេង",
+            "មាត់",
+            "ពាក្យ",
+            "អក្សរ",
+            "ខ្មែរ",
+            "អង់គ្លេស",
+            "Gemini",
+            "API",
+            "SRT",
+        },
+        key=len,
+        reverse=True,
+    )
+)
 
 
 def generate_srt(
@@ -109,7 +162,7 @@ def generate_srt(
     media_path = _prepare_media(input_path, output_dir)
     duration = _duration_seconds(media_path)
     segments = _transcribe_media(media_path, output_dir, api_key, model, duration)
-    beat_segments = _split_into_subtitle_beats(segments, words_per_subtitle)
+    beat_segments = _split_into_subtitle_beats(segments, 1)
     alignment_audio = _prepare_alignment_audio(media_path, output_dir)
     refined = _refine_timing_with_audio(beat_segments, alignment_audio, duration)
     corrected = _correct_timing(refined, duration)
@@ -487,9 +540,18 @@ def _word_segments_from_json(parent: dict[str, Any], word_items: list[Any]) -> l
         end = min(max(start, end), parent_end)
         if end <= start:
             end = min(parent_end, start + 0.12)
-        segments.append(Segment(start=max(0.0, start), end=max(0.0, end), text=text))
+        segment = Segment(start=max(0.0, start), end=max(0.0, end), text=text)
+        segments.extend(_split_segment_into_word_units(segment))
 
     return segments or [_segment_from_json(parent)]
+
+
+def _split_segment_into_word_units(segment: Segment) -> list[Segment]:
+    tokens = _tokenize_spoken_units(segment.text)
+    if len(tokens) <= 1:
+        return [segment]
+
+    return _distribute_tokens_over_segment(segment, tokens)
 
 
 def _refine_timing_with_audio(segments: list[Segment], audio_path: Path, duration: float | None) -> list[Segment]:
@@ -728,12 +790,82 @@ def _split_into_subtitle_beats(segments: list[Segment], words_per_subtitle: int 
     return beats
 
 
+def _distribute_tokens_over_segment(segment: Segment, tokens: list[str]) -> list[Segment]:
+    if not tokens:
+        return []
+    if len(tokens) == 1:
+        return [segment]
+
+    total_weight = sum(_token_weight(token) for token in tokens)
+    duration = max(0.01, segment.end - segment.start)
+    cursor = segment.start
+    distributed: list[Segment] = []
+    for index, token in enumerate(tokens):
+        if index == len(tokens) - 1:
+            end = segment.end
+        else:
+            end = cursor + duration * (_token_weight(token) / total_weight)
+        distributed.append(Segment(cursor, end, token))
+        cursor = end
+    return distributed
+
+
 def _tokenize_spoken_units(text: str) -> list[str]:
     safe_text = _srt_safe_text(text)
     if not safe_text.strip():
         return []
 
-    return [token for token in safe_text.split() if token]
+    whitespace_tokens = [token for token in safe_text.split() if token]
+    if len(whitespace_tokens) != 1:
+        return whitespace_tokens
+
+    token = whitespace_tokens[0]
+    if _looks_like_compact_khmer_phrase(token):
+        return _split_compact_khmer_phrase(token)
+    return whitespace_tokens
+
+
+def _looks_like_compact_khmer_phrase(text: str) -> bool:
+    khmer_chars = len(re.findall(r"[\u1780-\u17FF]", text))
+    latin_chars = len(re.findall(r"[A-Za-z0-9]", text))
+    return khmer_chars >= 5 and latin_chars == 0
+
+
+def _split_compact_khmer_phrase(text: str) -> list[str]:
+    hinted = _split_by_khmer_word_hints(text)
+    if len(hinted) > 1:
+        return hinted
+    return _split_khmer_syllable_units(text)
+
+
+def _split_by_khmer_word_hints(text: str) -> list[str]:
+    tokens: list[str] = []
+    index = 0
+    while index < len(text):
+        match = next((word for word in KHMER_WORD_HINTS if text.startswith(word, index)), None)
+        if match:
+            tokens.append(match)
+            index += len(match)
+            continue
+
+        next_match_index = min(
+            [position for word in KHMER_WORD_HINTS if (position := text.find(word, index + 1)) != -1],
+            default=-1,
+        )
+        if next_match_index == -1:
+            tokens.append(text[index:])
+            break
+        tokens.append(text[index:next_match_index])
+        index = next_match_index
+
+    return [token for token in tokens if token]
+
+
+def _split_khmer_syllable_units(text: str) -> list[str]:
+    units = re.findall(r"[\u1780-\u17A2](?:\u17D2[\u1780-\u17A2])*[\u17B6-\u17D3]*", text)
+    if len(units) > 1 and "".join(units) == text:
+        return units
+    return [text]
 
 
 def _token_weight(token: str) -> float:

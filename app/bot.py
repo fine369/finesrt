@@ -108,7 +108,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Gemini key: {gemini_status}\n"
         f"Allowed user: @{ALLOWED_USERNAME}\n"
         f"Model: {get_gemini_model(GEMINI_MODEL)}\n"
-        f"Words per subtitle: {get_words_per_subtitle()}"
+        "Words per subtitle: 1 (word-level timestamped)"
     )
 
 
@@ -141,7 +141,12 @@ async def handle_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if data == "menu:words":
-        await query.edit_message_text("ជ្រើសចំនួនពាក្យក្នុង subtitle មួយលោត:", reply_markup=_words_menu())
+        set_words_per_subtitle(1)
+        await query.edit_message_text(
+            "ឥឡូវ bot ប្រើ word-level timestamped ជានិច្ច៖ ១ពាក្យ លោត ១ដង។\n"
+            "Gemini សរសេរពាក្យមកបែបណា Bot នឹងរក្សាពាក្យនោះ ហើយកែតែ timing/SRT។",
+            reply_markup=_main_menu(),
+        )
         return
 
     if data.startswith("model:"):
@@ -261,7 +266,7 @@ def _settings_text() -> str:
         "Fine SRT Menu\n\n"
         f"API: {'មានរួច' if has_gemini_api_key() else 'មិនទាន់មាន'}\n"
         f"Model AI: {get_gemini_model(GEMINI_MODEL)}\n"
-        f"ពាក្យចេញម្តង: {get_words_per_subtitle()}"
+        "ពាក្យចេញម្តង: 1 (word-level)"
     )
 
 
@@ -270,7 +275,7 @@ def _main_menu() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("API", callback_data="menu:api")],
             [InlineKeyboardButton("Model AI", callback_data="menu:model")],
-            [InlineKeyboardButton("ពាក្យចេញ 1 / 2 / 3", callback_data="menu:words")],
+            [InlineKeyboardButton("ពាក្យចេញ 1 ពាក្យៗ", callback_data="menu:words")],
         ]
     )
 
