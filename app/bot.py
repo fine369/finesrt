@@ -150,8 +150,8 @@ async def handle_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             set_gemini_model(model)
             await query.edit_message_text(
                 f"បានប្តូរ Model AI ទៅ: {model}\n\n"
-                "Bot នឹងប្រើ model នេះពិតៗសម្រាប់ transcript សម្លេង/video ទៅជា SRT។ "
-                "បើ model នេះមិនគាំទ្រ audio/SRT, bot នឹងបង្ហាញ error ច្បាស់។\n\n"
+                "Bot នឹងសាកប្រើ model នេះមុនគេសម្រាប់ transcript សម្លេង/video ទៅជា SRT។ "
+                "បើ Gemini overload/timeout ឬ model នេះមិនគាំទ្រ audio, bot នឹងសាក backup model សម្រាប់ SRT ដើម្បីឲ្យការងារដើររលូនជាងមុន។\n\n"
                 + _settings_text(),
                 reply_markup=_main_menu(),
             )
@@ -203,7 +203,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         await status.edit_text(
             "Gemini កំពុងស្តាប់ និងបំបែកជា segment មាន timestamp...\n"
-            f"Model កំពុងប្រើពិតៗ: {active_model}"
+            f"Model ជ្រើសរើស: {active_model}\n"
+            "បើ model នេះ timeout, bot នឹងសាក backup model សម្រាប់ SRT។"
         )
         srt_path = await asyncio.to_thread(
             generate_srt,

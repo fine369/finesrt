@@ -81,8 +81,16 @@ Return ONLY valid JSON in this exact shape:
 Fix this invalid subtitle JSON. Keep the same data. Remove any prose, markdown, or trailing broken text.
 """.strip()
 
-RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-3.7-flash"
+RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-3.6-flash"
+TRANSCRIPTION_FALLBACK_MODELS = (
+    "gemini-3.6-flash",
+    "gemini-3.5-transcribe",
+    "gemini-3.5-flash",
+    "gemini-2.0-flash",
+)
 TRANSCRIPTION_CHUNK_SECONDS = 55.0
+GEMINI_REQUEST_TIMEOUT_SECONDS = 75
+GEMINI_RETRIES_PER_MODEL = 2
 ENERGY_FRAME_SECONDS = 0.01
 TIMING_START_LOOK_BEFORE_SECONDS = 0.18
 TIMING_START_LOOK_AFTER_SECONDS = 0.24
@@ -245,7 +253,7 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
     last_error: Exception | None = None
 
     for candidate_model in models_to_try:
-        for attempt in range(5):
+        for attempt in range(GEMINI_RETRIES_PER_MODEL):
             text = ""
             try:
                 text = _generate_content_rest(
@@ -267,7 +275,7 @@ def _transcribe_with_gemini(path: Path, api_key: str, model: str) -> list[Segmen
                 last_error = exc
                 if not _is_retryable_error(exc):
                     break
-                time.sleep(min(12, 2**attempt))
+                time.sleep(min(6, 2**attempt))
 
     raise GeminiTranscriptionError(
         _friendly_gemini_error(last_error, models_to_try),
@@ -295,7 +303,7 @@ def _generate_content_rest(api_key: str, model: str, parts: list[dict[str, Any]]
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=GEMINI_REQUEST_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -377,7 +385,8 @@ def _friendly_gemini_error(exc: Exception | None, models_tried: list[str]) -> st
         return (
             "Gemini API កំពុងរវល់ខ្លាំង ឬ timeout ពេលស្តាប់សម្លេង។ "
             "នេះជាបញ្ហា temporary ពី Google មិនមែន API key ខូចទេ។ "
-            "សូមសាកល្បងម្ដងទៀត បន្តិចទៀត ឬប្តូរ Model AI ទៅ gemini-3.6-flash ក្នុង /menu។"
+            f"Bot បានសាក backup models ទាំងនេះ: {tried}។ "
+            f"បើនៅជាប់ សូមប្តូរ Model AI ទៅ {RECOMMENDED_TRANSCRIPTION_MODEL} ក្នុង /menu ហើយសាកម្តងទៀត។"
         )
 
     if isinstance(exc, json.JSONDecodeError) or "json" in raw or "expecting value" in raw:
@@ -393,7 +402,11 @@ def _friendly_gemini_error(exc: Exception | None, models_tried: list[str]) -> st
 
 
 def _models_to_try(model: str) -> list[str]:
-    return [model]
+    models = [model]
+    for fallback in TRANSCRIPTION_FALLBACK_MODELS:
+        if fallback not in models:
+            models.append(fallback)
+    return models
 
 
 def _load_json(text: str) -> dict[str, Any]:
