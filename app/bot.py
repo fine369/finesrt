@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -28,6 +29,8 @@ OUTPUT_DIR = ROOT / "outputs"
 
 
 load_dotenv(ROOT / ".env")
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger("fine_srt_bot")
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 ALLOWED_USERNAME = os.getenv("ALLOWED_TELEGRAM_USERNAME", "petfine").lstrip("@").lower()
@@ -196,8 +199,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     input_path = DATA_DIR / f"{uuid.uuid4().hex}{suffix}"
     await tg_file.download_to_drive(custom_path=input_path)
 
+    active_model = get_gemini_model(GEMINI_MODEL)
     try:
-        active_model = get_gemini_model(GEMINI_MODEL)
         await status.edit_text(
             "Gemini កំពុងស្តាប់ និងបំបែកជា segment មាន timestamp...\n"
             f"Model កំពុងប្រើពិតៗ: {active_model}"
@@ -214,9 +217,11 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await status.edit_text(f"រក command មិនឃើញ៖ {exc.filename}. សូមដំឡើង ffmpeg។")
         return
     except GeminiTranscriptionError as exc:
+        LOGGER.exception("Gemini transcription failed while using model %s", active_model)
         await status.edit_text(exc.user_message)
         return
     except Exception as exc:
+        LOGGER.exception("Unexpected SRT generation failure while using model %s", active_model)
         await status.edit_text(
             "មានបញ្ហាពេលបង្កើត SRT។ នេះគឺជា bot transcript សម្លេង/video ទៅ SRT អក្សរលោតតាមមាត់និយាយ។ "
             f"សូមប្រើ model {RECOMMENDED_TRANSCRIPTION_MODEL} ក្នុង /menu ហើយសាកម្តងទៀត។\n\n"
