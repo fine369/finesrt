@@ -77,7 +77,7 @@ Return ONLY valid JSON in this exact shape:
 Fix this invalid subtitle JSON. Keep the same data. Remove any prose, markdown, or trailing broken text.
 """.strip()
 
-RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-2.5-flash"
+RECOMMENDED_TRANSCRIPTION_MODEL = "gemini-3.7-flash"
 TRANSCRIPTION_CHUNK_SECONDS = 55.0
 ENERGY_FRAME_SECONDS = 0.01
 TIMING_START_LOOK_BEFORE_SECONDS = 0.18

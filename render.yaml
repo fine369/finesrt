@@ -16,6 +16,6 @@ services:
       - key: ALLOWED_TELEGRAM_USERNAME
         value: petfine
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.7-flash
       - key: MAX_UPLOAD_MB
         value: 200

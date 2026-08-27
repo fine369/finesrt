@@ -146,7 +146,7 @@ def test_friendly_error_explains_unsupported_model():
     message = _friendly_gemini_error(Exception("404 model not found"), ["gemini-3.6-flash"])
 
     assert "Model AI" in message
-    assert "gemini-2.5-flash" in message
+    assert "gemini-3.7-flash" in message
 
 
 def test_uses_selected_model_without_silent_fallback():
